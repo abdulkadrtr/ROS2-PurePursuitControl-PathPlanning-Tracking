@@ -2,9 +2,8 @@
 ROS2 , Turtlebot3 , A* ve PurePursuit kullanılarak oluşturulan Rota Bulma ve İzleme Uygulaması
 
 
+![Screenshot_5](https://user-images.githubusercontent.com/87595266/205762696-91c48af3-617d-4784-a1d9-ebe66400df4c.png)
 
-
-![kapak](https://user-images.githubusercontent.com/87595266/205752064-9fd23095-1c5c-429e-8235-7534eefd5787.png)
 
 # Nasıl Çalışır
 Gerekli kurulumlar sonrasında komutu çalıştırın.  
@@ -19,3 +18,4 @@ https://youtu.be/tuD_ZEtZ_4o
 ### Notlar  
 Bu paket statik ortamda tek global planla hareket için yazılmıştır.  
 Dinamik ortamda global plan ve ona bağlı kalan lokal planlama paketi yakın zamanda..
+
