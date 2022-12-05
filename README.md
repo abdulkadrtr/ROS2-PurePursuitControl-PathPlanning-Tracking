@@ -14,4 +14,8 @@ Gerekli kurulumlar sonrasında komutu çalıştırın.
 Sonrasında rviz2 üzerinden hedef nokta belirleyin.  
 
 # Youtube Önizleme & Kullanım Videosu  
-https://youtu.be/TGVrJrp6-74
+https://youtu.be/tuD_ZEtZ_4o
+
+### Notlar  
+Bu paket statik ortamda tek global planla hareket için yazılmıştır.  
+Dinamik ortamda global plan ve ona bağlı kalan lokal planlama paketi yakın zamanda..
