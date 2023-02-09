@@ -2,23 +2,28 @@ import rclpy
 from rclpy.node import Node
 import numpy as np
 import heapq
-from nav_msgs.msg import Odometry , OccupancyGrid
+from nav_msgs.msg import OccupancyGrid , Odometry
 from geometry_msgs.msg import PoseStamped , Twist
-from rclpy.qos import QoSProfile , qos_profile_sensor_data
 import math
-import matplotlib.pyplot as plt
+import scipy.interpolate as si
+from rclpy.qos import QoSProfile
 
-K = 0.8 
-Lfc = 2.0 
-Kp = 1.0 
-dt = 0.1 
-L = 0.1 
+lookahead_distance = 0.15
+v = 0.1
+expansion_size = 2 #for the wall
 
-def euler_from_quaternion(x, y, z, w):
-        t3 = +2.0 * (w * z + x * y)
-        t4 = +1.0 - 2.0 * (y * y + z * z)
-        yaw_z = math.atan2(t3, t4)
-        return yaw_z # radyan
+def euler_from_quaternion(x,y,z,w):
+    t0 = +2.0 * (w * x + y * z)
+    t1 = +1.0 - 2.0 * (x * x + y * y)
+    roll_x = math.atan2(t0, t1)
+    t2 = +2.0 * (w * y - z * x)
+    t2 = +1.0 if t2 > +1.0 else t2
+    t2 = -1.0 if t2 < -1.0 else t2
+    pitch_y = math.asin(t2)
+    t3 = +2.0 * (w * z + x * y)
+    t4 = +1.0 - 2.0 * (y * y + z * z)
+    yaw_z = math.atan2(t3, t4)
+    return yaw_z
 
 def heuristic(a, b):
     return np.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
@@ -103,175 +108,143 @@ def astar(array, start, goal):
 
     return False
 
-class VehicleState:
+def bspline_planning(x, y, sn):
+    N = 2
+    t = range(len(x))
+    x_tup = si.splrep(t, x, k=N)
+    y_tup = si.splrep(t, y, k=N)
 
-    def __init__(self,x=0.0,y=0.0,yaw=0.0,v=0.0):
-        self.x = x
-        self.y = y 
-        self.yaw = yaw 
-        self.v = v 
-    
-def update(state,a,delta):
-    state.x = xC
-    state.y = yC
-    state.yaw = yaw_z
-    state.v = state.v + a * dt 
-    return state
-    
-def calc_target_index(state,cx,cy):
-    dx = [state.x - icx for icx in cx] 
-    dy = [state.y - icy for icy in cy]
-    d = [abs(math.sqrt(idx**2+idy**2)) for (idx,idy) in zip(dx,dy)]
-    ind = d.index(min(d)) 
-    L = 0.0
-    Lf = K*state.v + Lfc
-    while L < Lf and (ind+1) < len(cx):
-        dx_t = cx[ind+1] - cx[ind]
-        dy_t = cy[ind+1] - cx[ind]
-        L += math.sqrt(dx_t**2 + dy_t ** 2)
-        ind += 1
-    return ind 
+    x_list = list(x_tup)
+    xl = x.tolist()
+    x_list[1] = xl + [0.0, 0.0, 0.0, 0.0]
 
-def PContorl(target,current):
-    a = Kp * (target - current)
-    return a
+    y_list = list(y_tup)
+    yl = y.tolist()
+    y_list[1] = yl + [0.0, 0.0, 0.0, 0.0]
 
-def pure_pursuit_control(state, cx, cy, pind):
-    ind = calc_target_index(state, cx, cy)
+    ipl_t = np.linspace(0.0, len(x) - 1, sn)
+    rx = si.splev(ipl_t, x_list)
+    ry = si.splev(ipl_t, y_list)
 
-    if pind >= ind: 
-        ind = pind
-    
-    if ind < len(cx):
-        tx = cx[ind]
-        ty = cy[ind]
+    return rx, ry
+
+def pure_pursuit(current_x, current_y, current_heading, path,lookahead_distance,index):
+    closest_point = None
+    v = 0.1
+    for i in range(index,len(path)):
+        x = path[i][0]
+        y = path[i][1]
+        distance = math.hypot(current_x - x, current_y - y)
+        if lookahead_distance < distance:
+            closest_point = (x, y)
+            index = i
+            break
+    if closest_point is not None:
+        target_heading = math.atan2(closest_point[1] - current_y, closest_point[0] - current_x)
+        desired_steering_angle = target_heading - current_heading
     else:
-        tx = cx[-1]
-        ty = cy[-1] 
-    alpha = math.atan2(ty-state.y,tx-state.x) - yaw_z
-
-    if state.v < 0:
-        alpha = math.pi - alpha
-    Lf = (K * state.v + Lfc)
-    delta = math.atan2(2.0*L*math.sin(alpha)/Lf, 1.0) 
-    return delta, ind
-
-def createM(height,width,arr):
-    costmap_mat = np.ones([height,width])
-    for i in range(0,height):
-        for j in range(0,width):
-            if(arr[(i*width)+j]==100):
-                costmap_mat[i][j] = 1
-                #Duvar Genisletme İslemi
-                t = 2
-                for k in range(2*t+1):
-                    for l in range(2*t+1):
-                        try:
-                            costmap_mat[i+k-t][j+l-t]=1                   
-                        except:
-                            pass
-                #Duvar Genisletme islemi
-            else:
-                costmap_mat[i][j] = 0
-    return costmap_mat
+        target_heading = math.atan2(path[-1][1] - current_y, path[-1][0] - current_x)
+        desired_steering_angle = target_heading - current_heading
+        index = len(path)-1
+    if desired_steering_angle > math.pi:
+        desired_steering_angle -= 2 * math.pi
+    elif desired_steering_angle < -math.pi:
+        desired_steering_angle += 2 * math.pi
+    if desired_steering_angle > math.pi/6 or desired_steering_angle < -math.pi/6:
+        sign = 1 if desired_steering_angle > 0 else -1
+        desired_steering_angle = sign * math.pi/4
+        v = 0.0
+    return v,desired_steering_angle,index
 
 
 class navigationControl(Node):
     def __init__(self):
         super().__init__('Navigation')
-        self.subscription = self.create_subscription(OccupancyGrid,'map',self.listener_callback,qos_profile_sensor_data) #Grid Mesajına Abone
-        self.subscription = self.create_subscription(Odometry, 'odom',self.info_callback,QoSProfile(depth=10)) # Odometri Sensörüne Abone
+        self.subscription = self.create_subscription(OccupancyGrid,'map',self.listener_callback,10)
+        self.subscription = self.create_subscription(Odometry,'odom',self.info_callback,10)
         self.subscription = self.create_subscription(PoseStamped,'goal_pose',self.goal_pose_callback,QoSProfile(depth=10)) #rviz2 goal_pose Mesajına Abone
-        self.publisher = self.create_publisher(Twist, 'cmd_vel', QoSProfile(depth=10)) # cmd_vel abone
-        timer_period = 0.001
+        self.publisher = self.create_publisher(Twist, 'cmd_vel', 10) # cmd_vel abone
+        timer_period = 0.01
         self.timer = self.create_timer(timer_period, self.timer_callback)
-        self.ratio = 20
         self.flag = 0
-        print("Hedef Konum Bekleniyor..")
+        print("Hedef Bekleniyor...")
 
     def goal_pose_callback(self,msg):
-        self.goal = (msg.pose.position.y,msg.pose.position.x)
+        self.goal = (msg.pose.position.x,msg.pose.position.y)
+        print("Hedef Konum: ",self.goal[0],self.goal[1])
         self.flag = 1
 
-    def listener_callback(self, data):
-        self.width = data.info.width
-        self.height = data.info.height
-        arr = data.data
-        if(self.flag==1):
-            self.start = (int((self.height/2)-(self.xA)*self.ratio),int((self.width/2)+(self.yA)*self.ratio))
-            self.goal = (int((self.height/2)-self.goal[0]*self.ratio),int((self.width/2)+self.goal[1]*self.ratio))
-            grid = createM(self.height,self.width,arr)
-            self.route = astar(grid, self.start, self.goal)
-            self.route = self.route + [self.start]
-            self.route = self.route[::-1]
-            self.cx = []
-            self.cy = []  
-            for i in range(len(self.route)):
-                self.cx.append(self.route[i][0])
-                self.cy.append(self.route[i][1]) 
+    def listener_callback(self,msg):
+        if self.flag == 1:
+            self.resolution = msg.info.resolution
+            self.originX = msg.info.origin.position.x
+            self.originY = msg.info.origin.position.y
+            print("Robot Konum: ",self.originX,self.originY) #matrisin satır ve sütun değerleri robot icin
+            column = int((self.x- msg.info.origin.position.x)/msg.info.resolution)
+            row = int((self.y- msg.info.origin.position.y)/msg.info.resolution)
+            columnH = int((self.goal[0]- msg.info.origin.position.x)/msg.info.resolution)
+            rowH = int((self.goal[1]- msg.info.origin.position.y)/msg.info.resolution)
+            width = msg.info.width
+            height = msg.info.height
+            data = np.array(msg.data).reshape(height,width)
+            wall = np.where(data == 100)
+            for i in range(-expansion_size,expansion_size+1):
+                for j in range(-expansion_size,expansion_size+1):
+                    if i  == 0 and j == 0:
+                        continue
+                    x = wall[0]+i
+                    y = wall[1]+j
+                    x = np.clip(x,0,height-1)
+                    y = np.clip(y,0,width-1)
+                    data[x,y] = 100
+            data = data*msg.info.resolution
+            data[row][column] = 0 #Robot Anlık Konum
+            data[data < 0] = 1 #-0.05 olanlar bilinmeyen yer
+            data[data > 5] = 1 # 0 olanlar gidilebilir yer, 100 olanlar kesin engel
+            #Elimde 0 , 1 olusan matris var. 0 olanlar gidilebilir yer, 1 olanlar engel
+            #print("Robot Konum: ",row,column)
+            path = astar(data,(row,column),(rowH,columnH))
+            path = path + [(row,column)]
+            path = path[::-1]
+            path.pop(0)
+            pathB = path
+            pathB = [(p[1]*self.resolution+self.originX,p[0]*self.resolution+self.originY) for p in pathB]
+            pathB = np.array(pathB)
+            pathX = pathB[:,0]
+            pathY = pathB[:,1]
+            pathX,pathY = bspline_planning(pathX,pathY,len(pathX)*5)
+            self.path = [(pathX[i],pathY[i]) for i in range(len(pathX))]
+            print("Hedefe ilerleniyor...")
+            self.i = 0
             self.flag = 2
-            
-    def info_callback(self,msg):
-        self.xA = msg.pose.pose.position.y
-        self.yA = msg.pose.pose.position.x
-        global yaw_z
-        yaw_z = euler_from_quaternion(msg.pose.pose.orientation.x,msg.pose.pose.orientation.y,
-        msg.pose.pose.orientation.z,msg.pose.pose.orientation.w) + math.pi/2
-        if(self.flag == 2):
-            global xC,yC
-            xC = (self.height/2)-(self.xA)*self.ratio
-            yC = (self.width/2)+(self.yA)*self.ratio 
-            self.state = VehicleState(x =xC, y =yC,yaw = yaw_z, v = 0.0)
-            self.target_speed = 0.08
-            self.target_ind = calc_target_index(self.state,self.cx,self.cy)
-            self.x = [self.state.x]
-            self.y = [self.state.y]
-            self.yaw = [self.state.yaw]
-            self.v = [self.state.v]
-            self.flag = 3
-
-        if(self.flag == 3):
-            xC = (self.height/2)-(self.xA)*self.ratio
-            yC = (self.width/2)+(self.yA)*self.ratio
-
     def timer_callback(self):
-        twist = Twist()
-        err = 1
-        if(self.flag==3):
-            ai = PContorl(self.target_speed,self.state.v)
-            di, self.target_ind = pure_pursuit_control(self.state,self.cx,self.cy,self.target_ind)
-            self.state = update(self.state,ai,di)
-            twist.linear.x = self.state.v
-            twist.angular.z = di/self.state.v
-            self.publisher.publish(twist)
-            self.x.append(self.state.x)
-            self.y.append(self.state.y)
-            self.yaw.append(self.state.yaw)
-            self.v.append(self.state.v)
-            plt.cla()
-            plt.plot(self.cx,self.cy,".r",label="course")
-            plt.plot(self.x,self.y,"-b",label="trajectory")
-            plt.plot(self.cx[self.target_ind],self.cy[self.target_ind],"go",label="target")
-            plt.axis("equal")
-            plt.grid(True)
-            plt.pause(0.001)
+        if self.flag == 2:
+            twist = Twist()
+            try:
+                twist.linear.x , twist.angular.z,self.i = pure_pursuit(self.x,self.y,self.yaw,self.path,lookahead_distance,self.i)
+                if(abs(self.x - self.path[-1][0]) < 0.05 and abs(self.y - self.path[-1][1])< 0.05):
+                    twist.linear.x = 0.0
+                    twist.angular.z = 0.0
+                    self.flag = 0
+                    print("Hedefe Ulasildi.\n")
+                    print("Yeni Hedef Bekleniyor..")
+                self.publisher.publish(twist)
+            except:
+                pass
 
-        if(self.flag == 3 and xC-err < self.goal[0] and xC+err > self.goal[0] and yC-err < self.goal[1] and yC+err > self.goal[1]):
-            twist.linear.x = 0.0
-            twist.angular.z = 0.0
-            self.publisher.publish(twist)
-            self.flag=0
-            print("Hedefe Ulasildi.\n")
-            print("Yeni Konum Bekleniyor..")
-        
+    def info_callback(self,msg):
+        self.x = msg.pose.pose.position.x
+        self.y = msg.pose.pose.position.y
+        self.yaw = euler_from_quaternion(msg.pose.pose.orientation.x,msg.pose.pose.orientation.y,
+        msg.pose.pose.orientation.z,msg.pose.pose.orientation.w)
+
 
 def main(args=None):
+    rclpy.init(args=args)
+    navigation_control = navigationControl()
+    rclpy.spin(navigation_control)
+    navigation_control.destroy_node()
+    rclpy.shutdown()
 
-  rclpy.init(args=args)
-  navigation_control = navigationControl()
-  rclpy.spin(navigation_control)
-  navigation_control.destroy_node()
-  rclpy.shutdown()
-  
 if __name__ == '__main__':
-  main()
+    main()
