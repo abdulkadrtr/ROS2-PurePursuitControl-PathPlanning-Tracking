@@ -220,17 +220,14 @@ class navigationControl(Node):
     def timer_callback(self):
         if self.flag == 2:
             twist = Twist()
-            try:
-                twist.linear.x , twist.angular.z,self.i = pure_pursuit(self.x,self.y,self.yaw,self.path,lookahead_distance,self.i)
-                if(abs(self.x - self.path[-1][0]) < 0.05 and abs(self.y - self.path[-1][1])< 0.05):
-                    twist.linear.x = 0.0
-                    twist.angular.z = 0.0
-                    self.flag = 0
-                    print("Hedefe Ulasildi.\n")
-                    print("Yeni Hedef Bekleniyor..")
-                self.publisher.publish(twist)
-            except:
-                pass
+            twist.linear.x , twist.angular.z,self.i = pure_pursuit(self.x,self.y,self.yaw,self.path,lookahead_distance,self.i)
+            if(abs(self.x - self.path[-1][0]) < 0.05 and abs(self.y - self.path[-1][1])< 0.05):
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+                self.flag = 0
+                print("Hedefe Ulasildi.\n")
+                print("Yeni Hedef Bekleniyor..")
+            self.publisher.publish(twist)
 
     def info_callback(self,msg):
         self.x = msg.pose.pose.position.x
