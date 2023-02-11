@@ -9,7 +9,7 @@ import scipy.interpolate as si
 from rclpy.qos import QoSProfile
 
 lookahead_distance = 0.15
-v = 0.1
+speed = 0.1
 expansion_size = 2 #for the wall
 
 def euler_from_quaternion(x,y,z,w):
@@ -130,7 +130,7 @@ def bspline_planning(x, y, sn):
 
 def pure_pursuit(current_x, current_y, current_heading, path,lookahead_distance,index):
     closest_point = None
-    v = 0.1
+    v = speed
     for i in range(index,len(path)):
         x = path[i][0]
         y = path[i][1]
