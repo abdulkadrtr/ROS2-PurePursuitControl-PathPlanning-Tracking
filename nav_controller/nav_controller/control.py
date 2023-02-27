@@ -9,7 +9,7 @@ import scipy.interpolate as si
 from rclpy.qos import QoSProfile
 
 lookahead_distance = 0.15
-speed = 0.1
+v = 0.1
 expansion_size = 2 #for the wall
 
 def euler_from_quaternion(x,y,z,w):
@@ -29,83 +29,61 @@ def heuristic(a, b):
     return np.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
 
 def astar(array, start, goal):
-
     neighbors = [(0,1),(0,-1),(1,0),(-1,0),(1,1),(1,-1),(-1,1),(-1,-1)]
-
     close_set = set()
-
     came_from = {}
-
     gscore = {start:0}
-
     fscore = {start:heuristic(start, goal)}
-
     oheap = []
-
     heapq.heappush(oheap, (fscore[start], start))
-
-
     while oheap:
-
         current = heapq.heappop(oheap)[1]
-
         if current == goal:
-
             data = []
-
             while current in came_from:
-
                 data.append(current)
-
                 current = came_from[current]
-
+            data = data + [start]
+            data = data[::-1]
             return data
-
         close_set.add(current)
-
         for i, j in neighbors:
-
             neighbor = current[0] + i, current[1] + j
-
             tentative_g_score = gscore[current] + heuristic(current, neighbor)
-
             if 0 <= neighbor[0] < array.shape[0]:
-
                 if 0 <= neighbor[1] < array.shape[1]:                
-
                     if array[neighbor[0]][neighbor[1]] == 1:
-
                         continue
-
                 else:
-
                     # array bound y walls
-
                     continue
-
             else:
-
                 # array bound x walls
-
                 continue
-
-
             if neighbor in close_set and tentative_g_score >= gscore.get(neighbor, 0):
-
                 continue
-
-
             if  tentative_g_score < gscore.get(neighbor, 0) or neighbor not in [i[1]for i in oheap]:
-
                 came_from[neighbor] = current
-
                 gscore[neighbor] = tentative_g_score
-
                 fscore[neighbor] = tentative_g_score + heuristic(neighbor, goal)
-
                 heapq.heappush(oheap, (fscore[neighbor], neighbor))
-
-
+    # If no path to goal was found, return closest path to goal
+    if goal not in came_from:
+        closest_node = None
+        closest_dist = float('inf')
+        for node in close_set:
+            dist = heuristic(node, goal)
+            if dist < closest_dist:
+                closest_node = node
+                closest_dist = dist
+        if closest_node is not None:
+            data = []
+            while closest_node in came_from:
+                data.append(closest_node)
+                closest_node = came_from[closest_node]
+            data = data + [start]
+            data = data[::-1]
+            return data
     return False
 
 def bspline_planning(x, y, sn):
@@ -130,7 +108,7 @@ def bspline_planning(x, y, sn):
 
 def pure_pursuit(current_x, current_y, current_heading, path,lookahead_distance,index):
     closest_point = None
-    v = speed
+    v = 0.1
     for i in range(index,len(path)):
         x = path[i][0]
         y = path[i][1]
@@ -156,67 +134,86 @@ def pure_pursuit(current_x, current_y, current_heading, path,lookahead_distance,
         v = 0.0
     return v,desired_steering_angle,index
 
+def costmap(data,width,height,resolution):
+    data = np.array(data).reshape(height,width)
+    wall = np.where(data == 100)
+    for i in range(-expansion_size,expansion_size+1):
+        for j in range(-expansion_size,expansion_size+1):
+            if i  == 0 and j == 0:
+                continue
+            x = wall[0]+i
+            y = wall[1]+j
+            x = np.clip(x,0,height-1)
+            y = np.clip(y,0,width-1)
+            data[x,y] = 100
+    data = data*resolution
+    return data
+
+def bspline_planning(array, sn):
+    try:
+        array = np.array(array)
+        x = array[:, 0]
+        y = array[:, 1]
+        N = 2
+        t = range(len(x))
+        x_tup = si.splrep(t, x, k=N)
+        y_tup = si.splrep(t, y, k=N)
+
+        x_list = list(x_tup)
+        xl = x.tolist()
+        x_list[1] = xl + [0.0, 0.0, 0.0, 0.0]
+
+        y_list = list(y_tup)
+        yl = y.tolist()
+        y_list[1] = yl + [0.0, 0.0, 0.0, 0.0]
+
+        ipl_t = np.linspace(0.0, len(x) - 1, sn)
+        rx = si.splev(ipl_t, x_list)
+        ry = si.splev(ipl_t, y_list)
+        path = [(rx[i],ry[i]) for i in range(len(rx))]
+    except:
+        path = array
+    return path
+
 
 class navigationControl(Node):
     def __init__(self):
         super().__init__('Navigation')
         self.subscription = self.create_subscription(OccupancyGrid,'map',self.listener_callback,10)
         self.subscription = self.create_subscription(Odometry,'odom',self.info_callback,10)
-        self.subscription = self.create_subscription(PoseStamped,'goal_pose',self.goal_pose_callback,QoSProfile(depth=10)) #rviz2 goal_pose Mesajına Abone
-        self.publisher = self.create_publisher(Twist, 'cmd_vel', 10) # cmd_vel abone
+        self.subscription = self.create_subscription(PoseStamped,'goal_pose',self.goal_pose_callback,QoSProfile(depth=10))
+        self.publisher = self.create_publisher(Twist, 'cmd_vel', 10)
         timer_period = 0.01
         self.timer = self.create_timer(timer_period, self.timer_callback)
-        self.flag = 0
         print("Hedef Bekleniyor...")
+        self.flag = 0
 
     def goal_pose_callback(self,msg):
         self.goal = (msg.pose.position.x,msg.pose.position.y)
-        print("Hedef Konum: ",self.goal[0],self.goal[1])
+        print("Hedef Konumu: ",self.goal[0],self.goal[1])
         self.flag = 1
 
     def listener_callback(self,msg):
         if self.flag == 1:
-            self.resolution = msg.info.resolution
-            self.originX = msg.info.origin.position.x
-            self.originY = msg.info.origin.position.y
-            print("Robot Konum: ",self.originX,self.originY) #matrisin satır ve sütun değerleri robot icin
-            column = int((self.x- msg.info.origin.position.x)/msg.info.resolution)
-            row = int((self.y- msg.info.origin.position.y)/msg.info.resolution)
-            columnH = int((self.goal[0]- msg.info.origin.position.x)/msg.info.resolution)
-            rowH = int((self.goal[1]- msg.info.origin.position.y)/msg.info.resolution)
-            width = msg.info.width
-            height = msg.info.height
-            data = np.array(msg.data).reshape(height,width)
-            wall = np.where(data == 100)
-            for i in range(-expansion_size,expansion_size+1):
-                for j in range(-expansion_size,expansion_size+1):
-                    if i  == 0 and j == 0:
-                        continue
-                    x = wall[0]+i
-                    y = wall[1]+j
-                    x = np.clip(x,0,height-1)
-                    y = np.clip(y,0,width-1)
-                    data[x,y] = 100
-            data = data*msg.info.resolution
-            data[row][column] = 0 #Robot Anlık Konum
-            data[data < 0] = 1 #-0.05 olanlar bilinmeyen yer
-            data[data > 5] = 1 # 0 olanlar gidilebilir yer, 100 olanlar kesin engel
-            #Elimde 0 , 1 olusan matris var. 0 olanlar gidilebilir yer, 1 olanlar engel
-            #print("Robot Konum: ",row,column)
-            path = astar(data,(row,column),(rowH,columnH))
-            path = path + [(row,column)]
-            path = path[::-1]
-            path.pop(0)
-            pathB = path
-            pathB = [(p[1]*self.resolution+self.originX,p[0]*self.resolution+self.originY) for p in pathB]
-            pathB = np.array(pathB)
-            pathX = pathB[:,0]
-            pathY = pathB[:,1]
-            pathX,pathY = bspline_planning(pathX,pathY,len(pathX)*5)
-            self.path = [(pathX[i],pathY[i]) for i in range(len(pathX))]
+            resolution = msg.info.resolution
+            originX = msg.info.origin.position.x
+            originY = msg.info.origin.position.y
+            column = int((self.x- originX)/resolution) #x,y koordinatlarından costmap indislerine çevirme
+            row = int((self.y- originY)/resolution) #x,y koordinatlarından costmap indislerine çevirme
+            columnH = int((self.goal[0]- originX)/resolution)#x,y koordinatlarından costmap indislerine çevirme
+            rowH = int((self.goal[1]- originY)/resolution)#x,y koordinatlarından costmap indislerine çevirme
+            data = costmap(msg.data,msg.info.width,msg.info.height,resolution) #costmap düzenleme
+            data[row][column] = 0 #robot konumu
+            data[data < 0] = 1 
+            data[data > 5] = 1 
+            path = astar(data,(row,column),(rowH,columnH)) #astar algoritması ile yol bulma
+            path = [(p[1]*resolution+originX,p[0]*resolution+originY) for p in path] #x,y koordinatlarına çevirme
+            self.path = bspline_planning(path,len(path)*5) #bspline ile düzeltme
+            print("Robot Konumu: ",self.x,self.y)
             print("Hedefe ilerleniyor...")
             self.i = 0
             self.flag = 2
+
     def timer_callback(self):
         if self.flag == 2:
             twist = Twist()
@@ -245,3 +242,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
