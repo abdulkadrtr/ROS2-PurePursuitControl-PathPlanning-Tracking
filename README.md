@@ -20,7 +20,21 @@ ROS2 , Turtlebot3 , A* ve PurePursuit kullanılarak oluşturulan Rota Bulma ve �
  - Costmap algoritması optimize edildi.
 
 # Nasıl Çalışır
-Gerekli kurulumlar sonrasında komutu çalıştırın.  
+
+Bir gazebo simulasyon dünyası başlatın. Örneğin;
+
+`export TURTLEBOT3_MODEL=burger`
+
+
+`ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py`
+
+
+
+Sonrasında harita paketini çalıştırın ve haritalama işlemini gerçekleştirin.
+
+`ros2 launch slam_toolbox online_async_launch.py`
+
+PathPlannig-Tracking paketini çalıştırın.
   
 `ros2 run nav_controller control`
 
@@ -29,7 +43,10 @@ Sonrasında rviz2 üzerinden hedef nokta belirleyin.
 # Youtube Önizleme & Kullanım Videosu  
 https://youtu.be/r_2mMyaLLaI
 
-### Notlar  
-Bu paket statik ortamda tek global planla hareket için yazılmıştır.  
-Dinamik ortamda global plan ve ona bağlı kalan lokal planlama paketi yakın zamanda..
+## Gereklilikler
+
+- ROS2 - Humble
+- Slam Toolbox
+- Turtlebot3 Paketi
+- Gazebo Simulasyonu
 
