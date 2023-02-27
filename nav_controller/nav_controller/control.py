@@ -106,11 +106,11 @@ def bspline_planning(x, y, sn):
 
     return rx, ry
 
-def pure_pursuit(current_x, current_y, current_heading, path):
+def pure_pursuit(current_x, current_y, current_heading, path,index):
     global lookahead_distance
     closest_point = None
     v = speed
-    for i in range(len(path)):
+    for i in range(index,len(path)):
         x = path[i][0]
         y = path[i][1]
         distance = math.hypot(current_x - x, current_y - y)
@@ -133,8 +133,7 @@ def pure_pursuit(current_x, current_y, current_heading, path):
         sign = 1 if desired_steering_angle > 0 else -1
         desired_steering_angle = sign * math.pi/4
         v = 0.0
-    path = path[index-2:]
-    return v,desired_steering_angle,path
+    return v,desired_steering_angle,index
 
 def costmap(data,width,height,resolution):
     data = np.array(data).reshape(height,width)
@@ -213,12 +212,13 @@ class navigationControl(Node):
             self.path = bspline_planning(path,len(path)*5) #bspline ile düzeltme
             print("Robot Konumu: ",self.x,self.y)
             print("Hedefe ilerleniyor...")
+            self.i = 0
             self.flag = 2
 
     def timer_callback(self):
         if self.flag == 2:
             twist = Twist()
-            twist.linear.x , twist.angular.z, self.path = pure_pursuit(self.x,self.y,self.yaw,self.path)
+            twist.linear.x , twist.angular.z,self.i = pure_pursuit(self.x,self.y,self.yaw,self.path,self.i)
             if(abs(self.x - self.path[-1][0]) < 0.05 and abs(self.y - self.path[-1][1])< 0.05):
                 twist.linear.x = 0.0
                 twist.angular.z = 0.0
