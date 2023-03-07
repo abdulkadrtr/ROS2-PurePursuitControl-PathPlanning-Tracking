@@ -1,4 +1,8 @@
 # ROS2-PurePursuitControl-PathPlanning-Tracking
+
+[en-readme](https://github.com/abdulkadrtr/ROS2-PurePursuitControl-PathPlanning-Tracking/blob/main/readme-en.md)
+
+
 ROS2 , Turtlebot3 , A* ve PurePursuit kullanılarak oluşturulan Rota Bulma ve İzleme Uygulaması
 
 
